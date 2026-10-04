@@ -4,6 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Cut, Edit, Lang, Moment, Recipe, Scene, Session } from '../types'
 import {
   CODE_FILE,
+  activeTime,
   applyEdit,
   buildScenes,
   classifyBash,
@@ -29,6 +30,7 @@ const PANE = 'buildreel-table'
 const sessionRef = atom({ plugin: 'buildreel', key: 'session' } as const, null)
 const editRef = atom({ plugin: 'buildreel', key: 'edit' } as const, emptyEdit)
 const cutsRef = atom({ plugin: 'buildreel', key: 'cuts' } as const, [] as Cut[])
+const renderingRef = atom({ plugin: 'buildreel', key: 'rendering' } as const, false)
 
 const CAPTURE_GAP_MS = 45_000
 
@@ -61,7 +63,10 @@ const UI = {
     copy: 'Copier le post',
     copied: 'Post copié.',
     post: 'Post pour X',
-    rendering: (n: number) => `Montage de ${n} plans en cours…`,
+    rendering: (n: number) => `Montage de ${n} plans en cours (environ 30 s)…`,
+    writingPost: 'Vidéo montée, Claude écrit le post…',
+    busyRender: 'Montage en cours…',
+    alreadyRendering: 'Un montage est déjà en cours.',
     ready: (out: string) => `Vidéo prête : ${out}`,
     failed: (why: string) => `Le montage a échoué : ${why}`,
     opened: 'Table de montage ouverte.',
@@ -106,7 +111,10 @@ const UI = {
     copy: 'Copy the post',
     copied: 'Post copied.',
     post: 'Post for X',
-    rendering: (n: number) => `Rendering ${n} shots…`,
+    rendering: (n: number) => `Rendering ${n} shots (about 30 s)…`,
+    writingPost: 'Video cut, Claude is writing the post…',
+    busyRender: 'Rendering…',
+    alreadyRendering: 'A render is already running.',
     ready: (out: string) => `Video ready: ${out}`,
     failed: (why: string) => `Rendering failed: ${why}`,
     opened: 'Editing table opened.',
@@ -358,21 +366,42 @@ async function renderReel($: EngineInterface) {
   const t = UI[lang]
   const session = await read($, sessionRef)
   if (!session) return t.none
+  // Un seul montage à la fois : un deuxième clic pendant le montage ne relance rien.
+  let claimed = false
+  await update($, renderingRef, busy => {
+    claimed = !busy
+    return true
+  })
+  if (!claimed) {
+    $.ui.toast(t.alreadyRendering)
+    return t.alreadyRendering
+  }
+  try {
+    return await renderOnce($, session)
+  } finally {
+    await update($, renderingRef, () => false)
+  }
+}
+
+async function renderOnce($: EngineInterface, session: Session) {
+  const t = UI[lang]
   const edit = await read($, editRef)
   const cuts = await read($, cutsRef)
   const kept = applyEdit(buildScenes(session, edit.from, lang, edit.to), edit)
   const now = await $.clock.now()
   const name = edit.name?.trim() || t.untitled(cuts.length + (edit.cutId ? 0 : 1))
   const out = `${session.dir}/${session.project}-${slug(name) || 'reel'}-${clockTime(now).replace(':', 'h')}.mp4`
-  const planPath = `${session.dir}/plan.json`
+  const planPath = out.replace(/\.mp4$/, '.plan.json')
   await $.fs.write(planPath, JSON.stringify({ project: session.project, lang, scenes: kept }, null, 1))
   await update($, editRef, ed => ({ ...ed, status: t.rendering(kept.length), output: null, post: null }))
+  $.ui.toast(t.rendering(kept.length))
   const ran = await $.process.run(['node', `${$.plugin.root}/bin/montage.mjs`, planPath, out], { timeoutMs: 600_000 })
   if (ran.exitCode !== 0) {
     const status = t.failed((ran.stderr || ran.stdout).slice(-240))
     await update($, editRef, ed => ({ ...ed, status }))
     return status
   }
+  await update($, editRef, ed => ({ ...ed, status: t.writingPost }))
   const forked = await $.model.fork({ prompt: postPrompt(lang, kept) })
   let post = forked.isAnswered ? cleanPost(forked.text) : null
   if (!post) {
@@ -391,6 +420,7 @@ async function renderReel($: EngineInterface) {
   await update($, cutsRef, () => saved.cuts)
   await update($, editRef, () => ({ ...done, cutId: saved.cut.id }))
   await $.fs.write(`${session.dir}/cuts.json`, JSON.stringify(saved.cuts, null, 1))
+  $.ui.toast(t.ready(tilde(out)), { timeoutMs: 10_000 })
   return post ? `${t.ready(tilde(out))}\n\n${post}` : t.ready(tilde(out))
 }
 
@@ -504,7 +534,6 @@ export const register: Register = (on, options) => {
     if (!session || session.moments.length === 0 || e.props.hasSurvey) return next(e)
     const t = UI[lang]
     const { Box, Text } = $.ui.resolve(e)
-    const last = session.moments.at(-1)!.at
     const shots = session.moments.filter(m => m.kind === 'capture').length
     return (
       <Box>
@@ -512,7 +541,7 @@ export const register: Register = (on, options) => {
           ● REC{' '}
         </Text>
         <Text dimColor>
-          {formatDuration(last - session.startedAt, lang)} · {session.moments.length} {t.moments} · {t.shots(shots)} ·{' '}
+          {formatDuration(activeTime([session.startedAt, ...session.moments.map(m => m.at)]), lang)} · {session.moments.length} {t.moments} · {t.shots(shots)} ·{' '}
         </Text>
         <Text>{t.toEdit}</Text>
       </Box>
@@ -529,6 +558,7 @@ export const register: Register = (on, options) => {
     if (!session) return <Text dimColor>{t.noSession}</Text>
 
     const cuts = await read($, cutsRef)
+    const rendering = await read($, renderingRef)
     const scenes = buildScenes(session, edit.from, lang, edit.to)
     const kept = applyEdit(scenes, edit)
     const selected = scenes.find(s => s.id === edit.selected) ?? scenes[0]!
@@ -583,6 +613,7 @@ export const register: Register = (on, options) => {
           {session.project} · {t.plans(kept.length, Math.round(runtime(kept)))}
         </Text>
         <Text dimColor>{t.local(tilde(session.dir))}</Text>
+        {edit.status && <Text color={rendering ? 'yellow' : edit.output ? 'green' : undefined}>{edit.status}</Text>}
         <Text> </Text>
         <Box>
           <Text>{t.cuts} </Text>
@@ -672,7 +703,12 @@ export const register: Register = (on, options) => {
         {thumb && Image && <Image key="thumb" source={{ png: thumb }} columns={40} rows={11} alt={selected.caption} />}
         <Text> </Text>
         <Box>
-          <Button key="render" variant="primary" label={t.render} onPress={() => void renderReel($)} />
+          <Button
+            key="render"
+            variant="primary"
+            label={rendering ? t.busyRender : t.render}
+            onPress={() => void renderReel($)}
+          />
           <Text> </Text>
           {edit.output && <Button key="open" label={t.open} onPress={() => void $.process.run(['open', edit.output!])} />}
           <Text> </Text>
@@ -680,7 +716,6 @@ export const register: Register = (on, options) => {
             <Button key="finder" label={t.finder} onPress={() => void $.process.run(['open', '-R', edit.output!])} />
           )}
         </Box>
-        {edit.status && <Text dimColor={!edit.output}>{edit.status}</Text>}
         {edit.post && (
           <Box flexDirection="column">
             <Text> </Text>

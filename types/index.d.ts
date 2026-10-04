@@ -59,7 +59,7 @@ export type Cut = Edit & { id: string; name: string; renderedAt: number | null }
 
 declare module 'claude-code' {
   interface PluginState {
-    buildreel: { session: Session | null; edit: Edit; cuts: Cut[] }
+    buildreel: { session: Session | null; edit: Edit; cuts: Cut[]; rendering: boolean }
   }
 }
 

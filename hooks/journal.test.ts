@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Session } from '../types'
-import { applyEdit, buildScenes, classifyBash, emptyEdit, imagesOf, isShot, parseRecipe, saveCut, shorten, slug } from './journal'
+import { activeTime, applyEdit, buildScenes, classifyBash, emptyEdit, imagesOf, isShot, parseRecipe, saveCut, shorten, slug } from './journal'
 
 const session: Session = {
   project: 'couleur',
@@ -95,4 +95,10 @@ test("garde les captures que la session regarde, pas les maquettes ni ses propre
     { type: 'text', text: 'rien' },
   ])
   expect(found).toEqual([{ toolUseId: 't1', data: 'AAA' }])
+})
+
+test('compte le temps de travail, pas la nuit entre deux séances', async () => {
+  const min = 60_000
+  expect(activeTime([0, 10 * min, 30 * min])).toBe(30 * min)
+  expect(activeTime([0, 10 * min, 10 * min + 9 * 60 * min, 10 * min + 9 * 60 * min + 5 * min])).toBe(35 * min)
 })

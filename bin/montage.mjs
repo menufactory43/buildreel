@@ -3,15 +3,16 @@
 // les enchaîne avec un léger zoom et des fondus. Un plan qui a un clip le joue à la place de l'image fixe.
 // Pas de musique : on met le son tendance au moment de poster.
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { screenshot } from './chrome.mjs'
 
 const [planPath, out] = process.argv.slice(2)
 const plan = JSON.parse(readFileSync(planPath, 'utf8'))
 const en = plan.lang === 'en'
-const work = join(dirname(out), 'frames')
+// Un dossier de travail par montage : deux montages ne se marchent jamais dessus.
+const work = join(dirname(out), `frames-${basename(out, '.mp4')}`)
 mkdirSync(work, { recursive: true })
 
 const SECONDS = { hook: 2.8, shot: 3.2, 'bug-red': 1.8, 'bug-green': 2.2, stats: 3, final: 3.6 }
@@ -139,4 +140,5 @@ execFileSync('ffmpeg', [
   '-c:v', 'libx264', '-crf', '20', '-preset', 'medium', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
   out,
 ], { stdio: ['ignore', 'ignore', 'inherit'] })
+rmSync(work, { recursive: true, force: true })
 process.stdout.write(out)

@@ -99,6 +99,16 @@ export function formatDuration(ms: number, lang: 'fr' | 'en' = 'fr') {
   return lang === 'fr' ? `${h} h ${String(m).padStart(2, '0')}` : `${h}h${String(m).padStart(2, '0')}`
 }
 
+// Le temps de travail, pas le temps écoulé : un trou de plus de 20 min est une pause (une nuit,
+// un repas) et ne compte pas.
+export const BREAK_MS = 20 * 60_000
+export function activeTime(times: number[]) {
+  const sorted = [...times].sort((a, b) => a - b)
+  let total = 0
+  for (let i = 1; i < sorted.length; i++) total += Math.min(sorted[i]! - sorted[i - 1]!, BREAK_MS)
+  return total
+}
+
 export function clockTime(at: number) {
   const d = new Date(at)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
@@ -122,6 +132,7 @@ export function buildScenes(session: Session, from: number | null, lang: Lang = 
   const start = from ?? session.startedAt
   const moments = session.moments.filter(m => m.at >= start && (to === null || m.at <= to))
   const end = moments.at(-1)?.at ?? start
+  const worked = activeTime([start, ...moments.map(m => m.at)])
   const shots = moments.filter(m => m.kind === 'capture' && m.image && !/^Merge /.test(m.label))
   const commits = moments.filter(m => m.kind === 'commit' && !/^Merge /.test(m.label))
   const files = new Set(moments.filter(m => m.kind === 'edit').map(m => m.file))
@@ -131,8 +142,8 @@ export function buildScenes(session: Session, from: number | null, lang: Lang = 
     id: 'hook',
     kind: 'hook',
     at: start,
-    caption: w.hook(`${session.project.charAt(0).toUpperCase()}${session.project.slice(1)}`, formatDuration(end - start, lang)),
-    highlight: formatDuration(end - start, lang),
+    caption: w.hook(`${session.project.charAt(0).toUpperCase()}${session.project.slice(1)}`, formatDuration(worked, lang)),
+    highlight: formatDuration(worked, lang),
   })
 
   const last = shots.at(-1)
