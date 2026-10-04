@@ -105,7 +105,7 @@ async function play(cdp, steps = []) {
 
 const reachable = await fetch(url, { signal: AbortSignal.timeout(2000) }).then(r => r.ok, () => false)
 if (!reachable) {
-  say({ ok: false, reason: `rien ne répond sur ${url}` })
+  say({ ok: false, unreachable: true, reason: `nothing answers on ${url}` })
   process.exit(0)
 }
 

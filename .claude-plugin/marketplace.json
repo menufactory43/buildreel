@@ -1,6 +1,6 @@
 {
   "name": "buildreel",
-  "owner": { "name": "Gabriel Turpin", "url": "https://github.com/menufactory43" },
+  "owner": { "name": "Meffysto", "url": "https://github.com/menufactory43" },
   "metadata": { "description": "Buildreel, the build-in-public video mod for Claude Code." },
   "plugins": [
     {

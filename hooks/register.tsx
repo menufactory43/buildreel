@@ -75,6 +75,8 @@ const UI = {
       `${n} moments rattrapés depuis ${at}, dont ${shots} capture${shots > 1 ? 's' : ''} de commits`,
     newRecipe: (why: string, file: string) => `nouvelle recette (${why}). Elle se modifie à la main dans ${file}.`,
     nowUrl: (url: string) => `Buildreel capture désormais ${url}.`,
+    serverOff: (url: string) =>
+      `Buildreel : rien ne répond sur ${url}. Lance ton serveur de dev pour les captures, ou indique la bonne adresse avec /reel url <adresse>.`,
     none: 'aucune session',
   },
   en: {
@@ -118,6 +120,8 @@ const UI = {
       `${n} moments caught up since ${at}, including ${shots} commit shot${shots > 1 ? 's' : ''}`,
     newRecipe: (why: string, file: string) => `new recipe (${why}). Edit it by hand in ${file}.`,
     nowUrl: (url: string) => `Buildreel now films ${url}.`,
+    serverOff: (url: string) =>
+      `Buildreel: nothing answers on ${url}. Start your dev server to get shots, or point to the right address with /reel url <address>.`,
     none: 'no session',
   },
 } as const
@@ -128,6 +132,8 @@ let busy = false
 let lastCaptureAt = 0
 let lastHash = ''
 let pending: { cancel: () => void } | null = null
+// On ne prévient qu'une fois par adresse que le serveur de dev ne répond pas.
+let warnedUrl = ''
 
 function tilde(path: string) {
   return path.replace(/^\/Users\/[^/]+/, '~')
@@ -225,6 +231,10 @@ async function capture($: EngineInterface, force = false) {
       timeoutMs: 90_000,
     })
     const answer = JSON.parse(ran.stdout || '{"ok":false,"reason":"no answer"}')
+    if (answer.unreachable && warnedUrl !== recipe.url) {
+      warnedUrl = recipe.url ?? ''
+      $.ui.toast(t.serverOff(recipe.url ?? session.url), { timeoutMs: 10_000 })
+    }
     if (!answer.ok) return answer.reason as string
     lastHash = answer.hash
     if (answer.dup) return t.unchanged

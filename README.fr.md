@@ -17,6 +17,8 @@ Dans Claude Code :
 /plugin install buildreel@buildreel
 ```
 
+Installé ainsi, il enregistre toutes tes sessions dans tous tes projets. Pour un seul projet, lance plutôt `claude plugin install buildreel@buildreel --scope local` depuis le dossier du projet.
+
 Il faut macOS, Google Chrome (ou Chromium, ou Brave), ffmpeg avec libx264 (`brew install ffmpeg`) et Node.js 22.4 ou plus récent.
 
 ## Commandes

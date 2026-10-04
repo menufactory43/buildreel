@@ -25,6 +25,13 @@ In Claude Code:
 /plugin install buildreel@buildreel
 ```
 
+Pick where it records. Installed as above, it is on for every session in every project. To record only one project, run this from that project's folder instead:
+
+```sh
+claude plugin marketplace add menufactory43/buildreel
+claude plugin install buildreel@buildreel --scope local
+```
+
 Or from a clone, for one session:
 
 ```sh
