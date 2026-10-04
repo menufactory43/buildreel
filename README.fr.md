@@ -19,6 +19,8 @@ Dans Claude Code :
 
 Installé ainsi, il enregistre toutes tes sessions dans tous tes projets. Pour un seul projet, lance plutôt `claude plugin install buildreel@buildreel --scope local` depuis le dossier du projet.
 
+Pour mettre à jour : `/plugin marketplace update buildreel`, puis `/plugin update buildreel@buildreel`, puis relancer Claude Code.
+
 Il faut macOS, Google Chrome (ou Chromium, ou Brave), ffmpeg avec libx264 (`brew install ffmpeg`) et Node.js 22.4 ou plus récent.
 
 ## Commandes

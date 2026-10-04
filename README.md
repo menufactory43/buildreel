@@ -39,6 +39,8 @@ git clone https://github.com/menufactory43/buildreel
 claude --plugin-dir ./buildreel
 ```
 
+To update later: `/plugin marketplace update buildreel`, then `/plugin update buildreel@buildreel`, then restart Claude Code. Installed plugins run from a copy, so an update only reaches a session after a restart.
+
 **Needs:** macOS, Google Chrome (or Chromium, or Brave), [ffmpeg](https://ffmpeg.org) with libx264 (`brew install ffmpeg`), Node.js 22.4 or newer, and a Claude Code build with mods (function hooks). Built and tested on Claude Code 2.1.288.
 
 ## Use it
