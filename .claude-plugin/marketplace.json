@@ -1,0 +1,14 @@
+{
+  "name": "buildreel",
+  "owner": { "name": "Gabriel Turpin", "url": "https://github.com/menufactory43" },
+  "metadata": { "description": "Buildreel, the build-in-public video mod for Claude Code." },
+  "plugins": [
+    {
+      "name": "buildreel",
+      "source": "./",
+      "description": "Turns your Claude Code session into a 30-second build-in-public video, with an editing table before anything is shared.",
+      "version": "0.1.0",
+      "license": "MIT"
+    }
+  ]
+}

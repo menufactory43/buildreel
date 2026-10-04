@@ -1,0 +1,43 @@
+# Buildreel
+
+**Ta session Claude Code, montée en vidéo build in public de 30 secondes.**
+
+Buildreel est un mod pour [Claude Code](https://claude.com/claude-code). Pendant que tu construis, il note les moments qui comptent (fichiers écrits, tests qui passent du rouge au vert, commits) et filme ton app qui prend forme. À la fin, `/reel` ouvre une table de montage dans le terminal : tu choisis les plans, tu réécris les textes, tu règles le point de départ, puis il monte une vidéo verticale et le texte du post pour X.
+
+Rien ne quitte ta machine tant que tu ne postes pas toi-même.
+
+<p align="center"><img src="docs/demo.gif" width="270" alt="Vidéo verticale de 26 secondes montrant la construction d'un jeu de plateforme"></p>
+
+## Installer
+
+Dans Claude Code :
+
+```
+/plugin marketplace add menufactory43/buildreel
+/plugin install buildreel@buildreel
+```
+
+Il faut macOS, Google Chrome (ou Chromium, ou Brave), ffmpeg avec libx264 (`brew install ffmpeg`) et Node.js 22.4 ou plus récent.
+
+## Commandes
+
+| Commande | Ce qu'elle fait |
+|---|---|
+| `/reel` | Ouvre la table de montage. |
+| `/reel import` | Rattrape ce qui s'est passé avant le chargement du mod : l'historique de la session, puis une capture de chaque commit. |
+| `/reel capture` | Prend une capture tout de suite. |
+| `/reel monter` | Monte la vidéo et écrit le post. |
+| `/reel recette` | Demande à Claude de réécrire la recette de capture. |
+| `/reel url <adresse>` | Filme une autre adresse. |
+
+La table de montage, les textes de la vidéo et le post suivent la langue de ton système. Tu peux la forcer avec `/plugin configure buildreel@buildreel`.
+
+## Comment il filme n'importe quelle app
+
+Chaque capture ouvre l'app dans un Chrome neuf et invisible, qui tomberait toujours sur l'écran d'accueil. Buildreel demande donc au Claude de ta session comment montrer l'app : c'est lui qui l'a construite. Sa réponse, la recette, est enregistrée une fois par projet dans `~/Movies/buildreel/<projet>/recipe.json` et se modifie à la main. Le détail est dans le [README anglais](README.md#how-it-films-any-app).
+
+## Confidentialité
+
+Le journal, les captures et les vidéos restent sur ton Mac, dans `~/Movies/buildreel/`. La recette et le post sont écrits par ta propre session Claude Code. Les vieux commits sont filmés depuis un `git worktree` temporaire, supprimé juste après.
+
+Licence MIT.

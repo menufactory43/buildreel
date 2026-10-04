@@ -1,0 +1,24 @@
+{
+  "name": "buildreel",
+  "version": "0.1.0",
+  "description": "Turns your Claude Code session into a 30-second build-in-public video: it records the moments, films your app, and gives you an editing table before anything is shared.",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Gabriel Turpin",
+    "url": "https://github.com/menufactory43"
+  },
+  "license": "MIT",
+  "userConfig": {
+    "lang": {
+      "type": "string",
+      "title": "Language",
+      "description": "Language of the editing table and the video (auto follows your system).",
+      "options": [
+        "auto",
+        "en",
+        "fr"
+      ],
+      "default": "auto"
+    }
+  }
+}
