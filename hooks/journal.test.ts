@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Session } from '../types'
-import { activeTime, applyEdit, buildScenes, classifyBash, emptyEdit, imagesOf, isShot, parseRecipe, saveCut, shorten, slug } from './journal'
+import { runsElsewhere, activeTime, applyDirection, applyEdit, directorPrompt, parseDirection, buildScenes, classifyBash, emptyEdit, imagesOf, isShot, parseRecipe, saveCut, shorten, slug } from './journal'
 
 const session: Session = {
   project: 'couleur',
@@ -56,8 +56,11 @@ test('lit la recette écrite par Claude, même entourée de texte', async () => 
   const text = 'Voici :\n```json\n{"type":"web","url":"http://localhost:5190","etapes":[{"touche":"Enter"},{"bidon":1}],"clip":{"secondes":9,"etapes":[{"maintenir":"ArrowRight","ms":700}]}}\n```'
   const recipe = parseRecipe(text, 'http://localhost:5173')
   expect(recipe?.url).toBe('http://localhost:5190')
-  expect(recipe?.etapes?.length).toBe(1)
-  expect(recipe?.clip?.secondes).toBe(4)
+  expect(recipe?.steps?.length).toBe(1)
+  expect(recipe?.clip?.seconds).toBe(4)
+  const fresh = parseRecipe('{"type":"web","steps":[{"key":"Enter"}],"clip":{"seconds":2,"steps":[{"hold":"ArrowRight","ms":500}]}}', 'http://localhost:5173')
+  expect(fresh?.steps).toEqual([{ key: 'Enter' }])
+  expect(fresh?.clip?.steps?.length).toBe(1)
   expect(parseRecipe('{"type":"ios"}', 'x')).toEqual({ type: 'ios' })
   expect(parseRecipe('pas de json', 'x')).toBe(null)
   expect(parseRecipe('{"type":"web","url":"javascript:alert(1)"}', 'http://localhost:5173')?.url).toBe('http://localhost:5173')
@@ -101,4 +104,29 @@ test('compte le temps de travail, pas la nuit entre deux séances', async () => 
   const min = 60_000
   expect(activeTime([0, 10 * min, 30 * min])).toBe(30 * min)
   expect(activeTime([0, 10 * min, 10 * min + 9 * 60 * min, 10 * min + 9 * 60 * min + 5 * min])).toBe(35 * min)
+})
+
+test('Claude choisit les plans et les textes, les règles restent en secours', async () => {
+  const reply = 'Voilà : {"hook":"Mon jeu de teinture en 1 h","shots":[{"id":"c3","caption":"La version finale"},{"id":"c1","caption":"Le départ"},{"id":"pirate","caption":"x"}],"bug":false}'
+  const direction = parseDirection(reply, ['c1', 'c2', 'c3'])
+  expect(direction?.shots.map(s => s.id)).toEqual(['c3', 'c1'])
+  const edit = applyDirection(emptyEdit, direction!)
+  const scenes = applyEdit(buildScenes(session, null, 'fr', null, edit.picks), edit)
+  expect(scenes.filter(s => s.kind === 'shot').map(s => s.caption)).toEqual(['Le départ'])
+  // Le dernier plan garde la signature, sur l'image choisie par Claude.
+  expect(scenes.find(s => s.kind === 'final')?.caption).toBe('Fait avec Claude Code')
+  expect(scenes.find(s => s.kind === 'final')?.image).toBe('/tmp/3.png')
+  expect(scenes[0]?.caption).toBe('Mon jeu de teinture en 1 h')
+  expect(scenes.some(s => s.kind === 'bug-red')).toBe(false)
+  expect(parseDirection('{"shots":[{"id":"inconnu"}]}', ['c1'])).toBe(null)
+  expect(directorPrompt('fr', session, null, null)).toContain('capture id=c2')
+})
+
+test("ignore les commandes qui travaillent dans un autre dossier", async () => {
+  const root = '/Users/x/couleur'
+  expect(runsElsewhere('cd ~/buildreel && git commit -m "x"', root, '/Users/x')).toBe(true)
+  expect(runsElsewhere('git -C /Users/x/autre log', root, '/Users/x')).toBe(true)
+  expect(runsElsewhere('cd /Users/x/couleur/src && pnpm test', root, '/Users/x')).toBe(false)
+  expect(runsElsewhere('cd src && pnpm test', root, '/Users/x')).toBe(false)
+  expect(runsElsewhere('git commit -m "Ajoute le safran"', root, '/Users/x')).toBe(false)
 })

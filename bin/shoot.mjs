@@ -18,7 +18,16 @@ const say = value => {
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 
-const recipe = JSON.parse(readFileSync(recipePath, 'utf8'))
+// Les premières recettes étaient écrites en français : on les lit toujours.
+const FRENCH = {
+  touche: 'key', maintenir: 'hold', clic: 'click', bouton: 'button', defiler: 'scroll', attendre: 'wait',
+  attente: 'delay', etapes: 'steps', secondes: 'seconds', pourquoi: 'why',
+}
+const english = v =>
+  Array.isArray(v) ? v.map(english)
+  : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [FRENCH[k] ?? k, english(x)]))
+  : v
+const recipe = english(JSON.parse(readFileSync(recipePath, 'utf8')))
 const url = urlOverride || recipe.url
 const width = recipe.largeur ?? 1280
 const height = recipe.hauteur ?? 720
@@ -74,32 +83,32 @@ async function key(cdp, name, type) {
 async function click(cdp, step) {
   const x = Math.round((step.x ?? 0.5) * width)
   const y = Math.round((step.y ?? 0.5) * height)
-  const button = step.bouton ?? 'left'
+  const button = step.button ?? 'left'
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
   await cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button, clickCount: 1 })
   if (step.ms) await sleep(step.ms)
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button, clickCount: 1 })
 }
 
-// Une étape : { touche }, { maintenir, ms }, { clic: {x, y, bouton, ms} } (x et y de 0 à 1),
-// { defiler: pixels }, { attendre: ms }. Plusieurs touches maintenues ensemble : { maintenir: ["ArrowRight", "Space"], ms }.
+// Une étape : { key }, { hold, ms }, { click: {x, y, button, ms} } (x et y de 0 à 1),
+// { scroll: pixels }, { wait: ms }. Plusieurs touches maintenues ensemble : { hold: ["ArrowRight", "Space"], ms }.
 async function play(cdp, steps = []) {
   for (const step of steps) {
-    if (step.touche) {
-      await key(cdp, step.touche, 'keyDown')
+    if (step.key) {
+      await key(cdp, step.key, 'keyDown')
       await sleep(60)
-      await key(cdp, step.touche, 'keyUp')
-    } else if (step.maintenir) {
-      const names = [step.maintenir].flat()
+      await key(cdp, step.key, 'keyUp')
+    } else if (step.hold) {
+      const names = [step.hold].flat()
       for (const n of names) await key(cdp, n, 'keyDown')
       await sleep(step.ms ?? 500)
       for (const n of names) await key(cdp, n, 'keyUp')
-    } else if (step.clic) {
-      await click(cdp, step.clic)
-    } else if (step.defiler) {
-      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: width / 2, y: height / 2, deltaX: 0, deltaY: step.defiler })
+    } else if (step.click) {
+      await click(cdp, step.click)
+    } else if (step.scroll) {
+      await cdp.send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: width / 2, y: height / 2, deltaX: 0, deltaY: step.scroll })
     }
-    await sleep(step.attendre ?? 120)
+    await sleep(step.wait ?? 120)
   }
 }
 
@@ -149,12 +158,12 @@ try {
   const loaded = new Promise(r => cdp.on('Page.loadEventFired', r))
   await cdp.send('Page.navigate', { url })
   await Promise.race([loaded, sleep(10_000)])
-  await sleep(recipe.attente ?? 1500)
-  await play(cdp, recipe.etapes)
+  await sleep(recipe.delay ?? 1500)
+  await play(cdp, recipe.steps)
 
   // Le clip se filme d'abord, l'image fixe se prend aussitôt après (le dernier état de l'écran),
   // l'encodage vient en dernier : un clip raté ne coûte jamais l'image.
-  const clipSeconds = recipe.clip?.secondes ?? 0
+  const clipSeconds = recipe.clip?.seconds ?? 0
   const frames = `${base}-frames`
   let n = 0
   let elapsed = 0
@@ -168,7 +177,7 @@ try {
       cdp.send('Page.screencastFrameAck', { sessionId }).catch(() => {})
     })
     await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 85, maxWidth: width, maxHeight: height, everyNthFrame: 1 })
-    await Promise.all([play(cdp, recipe.clip.etapes), sleep(clipSeconds * 1000)])
+    await Promise.all([play(cdp, recipe.clip.steps), sleep(clipSeconds * 1000)])
     await cdp.send('Page.stopScreencast')
     elapsed = (Date.now() - started) / 1000
   }

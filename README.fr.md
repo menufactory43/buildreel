@@ -2,7 +2,7 @@
 
 **Ta session Claude Code, montée en vidéo build in public de 30 secondes.**
 
-Buildreel est un mod pour [Claude Code](https://claude.com/claude-code). Pendant que tu construis, il note les moments qui comptent (fichiers écrits, tests qui passent du rouge au vert, commits) et filme ton app qui prend forme. À la fin, `/reel` ouvre une table de montage dans le terminal : tu choisis les plans, tu réécris les textes, tu règles le point de départ, puis il monte une vidéo verticale et le texte du post pour X.
+Buildreel est un mod pour [Claude Code](https://claude.com/claude-code). Pendant que tu construis, il note les moments qui comptent (fichiers écrits, tests qui passent du rouge au vert, commits) et filme ton app qui prend forme. À la fin, `/reel` ouvre une table de montage dans le terminal. Le Claude de ta session, qui sait ce qui a compté, choisit les plans et écrit des textes qu'un spectateur comprend. Tu gardes le dernier mot sur chaque plan, puis il monte une vidéo verticale et le texte du post pour X.
 
 Rien ne quitte ta machine tant que tu ne postes pas toi-même.
 

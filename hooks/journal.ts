@@ -1,6 +1,6 @@
 // Logique pure de Buildreel : lire les actions de Claude, choisir les plans de la vidéo.
 // Pas de `$` ici, pour pouvoir tout tester sans moteur.
-import type { Cut, Edit, Lang, Moment, Recipe, Scene, Session } from '../types'
+import type { Cut, Edit, Lang, Moment, Recipe, RecipeStep, Scene, Session } from '../types'
 
 const TEST_CMD = /\b(vitest|jest|pytest|(pnpm|npm|yarn|bun)( run)? test|swift test|cargo test|xcodebuild\b.*\btest)\b/
 const BUILD_CMD = /\b((pnpm|npm|yarn|bun)( run)? build|vite build|xcodebuild|swift build|cargo build)\b/
@@ -12,6 +12,7 @@ export const emptyEdit: Edit = {
   name: null,
   from: null,
   to: null,
+  picks: null,
   title: null,
   selected: null,
   captions: {},
@@ -87,6 +88,20 @@ export function shorten(text: string, max = 52) {
   return `${cut.slice(0, Math.max(cut.lastIndexOf(' '), max - 12)).replace(/[\s,:;·–-]+$/, '')}…`
 }
 
+// Une commande qui part travailler ailleurs (`cd ~/autre && git commit`, `git -C ~/autre …`)
+// ne raconte rien sur ce projet-ci.
+export function runsElsewhere(command: string, root: string, home: string) {
+  const targets = [
+    ...[...command.matchAll(/(?:^|&&|;|\|\|)\s*cd\s+("[^"]+"|'[^']+'|[^\s;&|]+)/g)].map(m => m[1]!),
+    ...[...command.matchAll(/\bgit\s+-C\s+("[^"]+"|'[^']+'|[^\s;&|]+)/g)].map(m => m[1]!),
+  ]
+  return targets.some(raw => {
+    const path = raw.replace(/^["']|["']$/g, '').replace(/^~(?=\/|$)/, home).replace(/\/+$/, '')
+    if (!path.startsWith('/')) return false
+    return path !== root && !path.startsWith(root + '/')
+  })
+}
+
 export function relative(file: string, root: string) {
   return file.startsWith(root + '/') ? file.slice(root.length + 1) : file
 }
@@ -127,7 +142,13 @@ function spread<T>(items: T[], count: number): T[] {
 }
 
 // Choisit les plans à partir du journal. Le montage final applique ensuite les choix de la table de montage.
-export function buildScenes(session: Session, from: number | null, lang: Lang = 'fr', to: number | null = null): Scene[] {
+export function buildScenes(
+  session: Session,
+  from: number | null,
+  lang: Lang = 'fr',
+  to: number | null = null,
+  picks: string[] | null = null,
+): Scene[] {
   const w = WORDS[lang]
   const start = from ?? session.startedAt
   const moments = session.moments.filter(m => m.at >= start && (to === null || m.at <= to))
@@ -146,8 +167,10 @@ export function buildScenes(session: Session, from: number | null, lang: Lang = 
     highlight: formatDuration(worked, lang),
   })
 
-  const last = shots.at(-1)
-  const middle = spread(shots.slice(0, -1), 5)
+  // Les captures choisies par Claude si elles existent, sinon réparties sur la session.
+  const chosen = picks?.length ? shots.filter(s => picks.includes(s.id)) : null
+  const last = chosen?.length ? chosen.at(-1) : shots.at(-1)
+  const middle = chosen?.length ? chosen.slice(0, -1) : spread(shots.slice(0, -1), 5)
   middle.forEach((shot, i) => {
     const commit = [...commits].reverse().find(c => c.at <= shot.at && c.at >= (middle[i - 1]?.at ?? 0))
     scenes.push({
@@ -260,55 +283,67 @@ export function runtime(scenes: Scene[]) {
 // Le Claude de la session connaît l'app qu'il construit : c'est lui qui dit comment la montrer.
 
 export function defaultRecipe(url: string): Recipe {
-  return { type: 'web', url, attente: 1500, etapes: [], clip: { secondes: 2.5, etapes: [] } }
+  return { type: 'web', url, delay: 1500, steps: [], clip: { seconds: 2.5, steps: [] } }
 }
 
 export function recipePrompt(url: string) {
   return [
-    "Buildreel (un mod de cette session) va filmer l'app que tu construis ici pour en faire une vidéo de 30 s.",
-    "Écris sa recette de capture : comment, depuis un Chrome neuf et sans fenêtre, arriver en 2 ou 3 s sur l'écran le plus parlant",
-    "et le montrer en action (entrer dans une partie, ouvrir la vraie fonction phare, bouger, utiliser les vraies commandes).",
-    `Le serveur de dev détecté est ${url} ; corrige l'adresse ou ajoute le chemin de la bonne page si besoin.`,
-    "Réponds UNIQUEMENT par un objet JSON, sans texte autour :",
-    '{"type":"web","url":"…","attente":1500,"etapes":[…],"clip":{"secondes":2.5,"etapes":[…]},"pourquoi":"une phrase"}',
-    'Étapes possibles : {"touche":"Enter"} · {"maintenir":"ArrowRight","ms":700} · {"maintenir":["ArrowRight","Space"],"ms":500}',
-    '· {"clic":{"x":0.5,"y":0.5,"bouton":"left"}} (x et y de 0 à 1) · {"defiler":600} · {"attendre":500}.',
-    'Touches : Enter, Space, Escape, ArrowLeft/Right/Up/Down, une lettre ("e"), ShiftLeft. Chaque étape accepte "attendre" (ms) après elle.',
-    '"etapes" se joue avant le clip, "clip.etapes" pendant les secondes filmées.',
-    'Si l\'app n\'est pas une page web (app iOS, app Mac, CLI, bibliothèque), réponds {"type":"ios"}, {"type":"mac"} ou {"type":"aucun"}.',
+    'Buildreel (a mod in this session) is going to film the app you are building here, to cut a 30 s video.',
+    'Write its capture recipe: how to get, from a fresh headless Chrome, to the most telling screen in 2 or 3 s',
+    'and show it in action (start a game, open the main feature, move around, use the real controls).',
+    `The dev server found is ${url}; fix the address or add the path of the right page if needed.`,
+    'Reply ONLY with a JSON object, no text around it:',
+    '{"type":"web","url":"…","delay":1500,"steps":[…],"clip":{"seconds":2.5,"steps":[…]},"why":"one sentence"}',
+    'Steps: {"key":"Enter"} · {"hold":"ArrowRight","ms":700} · {"hold":["ArrowRight","Space"],"ms":500}',
+    '· {"click":{"x":0.5,"y":0.5,"button":"left"}} (x and y from 0 to 1) · {"scroll":600} · {"wait":500}.',
+    'Keys: Enter, Space, Escape, ArrowLeft/Right/Up/Down, a letter ("e"), ShiftLeft. Every step takes "wait" (ms) after it.',
+    '"steps" run before the clip, "clip.steps" during the filmed seconds.',
+    'If the app is not a web page (iOS app, Mac app, CLI, library), reply {"type":"ios"}, {"type":"mac"} or {"type":"none"}.',
   ].join('\n')
 }
 
-const STEP_KEYS = ['touche', 'maintenir', 'clic', 'defiler', 'attendre']
+// Les premières recettes étaient écrites en français : on les lit toujours.
+const FRENCH: Record<string, string> = {
+  touche: 'key', maintenir: 'hold', clic: 'click', bouton: 'button', defiler: 'scroll', attendre: 'wait',
+  attente: 'delay', etapes: 'steps', secondes: 'seconds', pourquoi: 'why', aucun: 'none',
+}
+function english(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(english)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [FRENCH[k] ?? k, english(v)]))
+  }
+  return typeof value === 'string' && FRENCH[value] ? FRENCH[value] : value
+}
+
+const STEP_KEYS = ['key', 'hold', 'click', 'scroll', 'wait']
 
 export function parseRecipe(text: string, fallbackUrl: string): Recipe | null {
   const json = text.match(/\{[\s\S]*\}/)?.[0]
   if (!json) return null
   let raw: unknown
   try {
-    raw = JSON.parse(json)
+    raw = english(JSON.parse(json))
   } catch {
     return null
   }
   if (!raw || typeof raw !== 'object') return null
   const r = raw as Record<string, unknown>
   const type = r.type
-  if (type !== 'web' && type !== 'ios' && type !== 'mac' && type !== 'aucun') return null
+  if (type !== 'web' && type !== 'ios' && type !== 'mac' && type !== 'none') return null
   if (type !== 'web') return { type }
   const steps = (v: unknown) =>
-    (Array.isArray(v) ? v : []).filter(
-      (s): s is Recipe['etapes'] extends (infer T)[] | undefined ? T : never =>
-        !!s && typeof s === 'object' && STEP_KEYS.some(k => k in s),
-    ).slice(0, 20)
+    (Array.isArray(v) ? v : [])
+      .filter((s): s is RecipeStep => !!s && typeof s === 'object' && STEP_KEYS.some(k => k in s))
+      .slice(0, 20)
   const clip = (r.clip ?? {}) as Record<string, unknown>
   const url = typeof r.url === 'string' && /^https?:\/\//.test(r.url) ? r.url : fallbackUrl
   return {
     type,
     url,
-    attente: Math.min(10_000, Math.max(0, Number(r.attente ?? 1500) || 0)),
-    etapes: steps(r.etapes),
-    clip: { secondes: Math.min(4, Math.max(0, Number(clip.secondes ?? 2.5) || 0)), etapes: steps(clip.etapes) },
-    pourquoi: typeof r.pourquoi === 'string' ? r.pourquoi.slice(0, 200) : undefined,
+    delay: Math.min(10_000, Math.max(0, Number(r.delay ?? 1500) || 0)),
+    steps: steps(r.steps),
+    clip: { seconds: Math.min(4, Math.max(0, Number(clip.seconds ?? 2.5) || 0)), steps: steps(clip.steps) },
+    why: typeof r.why === 'string' ? r.why.slice(0, 200) : undefined,
   }
 }
 
@@ -370,3 +405,65 @@ export function imagesOf(content: readonly { type: string; [field: string]: unkn
   return found
 }
 
+
+// ─── Le choix des moments par Claude ─────────────────────────────────────────
+// Les règles répartissent les captures sur la durée ; le Claude de la session sait lesquelles
+// montrent un vrai progrès, et sait le dire avec des mots de spectateur.
+
+export type Direction = { hook?: string; shots: { id: string; caption: string }[]; bug: boolean }
+
+export function directorPrompt(lang: Lang, session: Session, from: number | null, to: number | null) {
+  const start = from ?? session.startedAt
+  const moments = session.moments.filter(m => m.at >= start && (to === null || m.at <= to))
+  const worked = formatDuration(activeTime([start, ...moments.map(m => m.at)]), lang)
+  const lines = moments
+    .filter(m => m.kind !== 'edit' && !/^Merge /.test(m.label))
+    .map(m => {
+      const at = clockTime(m.at)
+      if (m.kind === 'capture') return `- capture id=${m.id} at ${at}${m.clip ? ' (with a short clip)' : ''}`
+      if (m.kind === 'commit') return `- commit at ${at}: ${m.label}`
+      if (m.kind === 'test') return `- tests at ${at}: ${m.ok ? `green (${m.passed ?? '?'} passing)` : `red (${m.failed ?? '?'} failing)`}`
+      return `- ${m.kind} at ${at}: ${m.label}`
+    })
+    .join('\n')
+  return [
+    `Buildreel is cutting a 30 s vertical build-in-public video of this session (${worked} of work on ${session.project}). Here is what it logged, in order:`,
+    lines,
+    'Pick the shots, as the person who did the work. Choose 3 to 6 captures (by id) that show visible progress or the most striking state of the app, in chronological order, and write each caption for a viewer who does not know the code: plain words, 50 characters max, no commit jargon.',
+    `Write the hook: what got built, 60 characters max, and keep the duration "${worked}" in it.`,
+    'Say whether the failing-then-passing tests are worth a shot ("bug": true or false).',
+    `Write in ${lang === 'fr' ? 'French' : 'English'}. Reply ONLY with JSON: {"hook":"…","shots":[{"id":"…","caption":"…"}],"bug":true}`,
+  ].join('\n')
+}
+
+export function parseDirection(text: string, captureIds: string[]): Direction | null {
+  const json = text.match(/\{[\s\S]*\}/)?.[0]
+  if (!json) return null
+  let raw: { hook?: unknown; shots?: unknown; bug?: unknown }
+  try {
+    raw = JSON.parse(json)
+  } catch {
+    return null
+  }
+  const shots = (Array.isArray(raw.shots) ? raw.shots : [])
+    .filter((s): s is { id: string; caption?: unknown } => !!s && typeof s === 'object' && captureIds.includes(String((s as { id?: unknown }).id)))
+    .map(s => ({ id: String(s.id), caption: typeof s.caption === 'string' ? s.caption.trim().slice(0, 70) : '' }))
+    .filter((s, i, all) => all.findIndex(o => o.id === s.id) === i)
+    .slice(0, 6)
+  if (shots.length === 0) return null
+  return {
+    hook: typeof raw.hook === 'string' && raw.hook.trim() ? raw.hook.trim().slice(0, 80) : undefined,
+    shots,
+    bug: raw.bug !== false,
+  }
+}
+
+// Applique le choix de Claude à la coupe : ses captures, ses textes, le bug gardé ou non.
+export function applyDirection(edit: Edit, direction: Direction): Edit {
+  const captions: Record<string, string> = { ...edit.captions }
+  if (direction.hook) captions.hook = direction.hook
+  for (const shot of direction.shots) if (shot.caption) captions[shot.id] = shot.caption
+  const bugIds = ['bug-red', 'bug-green']
+  const dropped = edit.dropped.filter(id => !bugIds.includes(id) && !direction.shots.some(s => s.id === id))
+  return { ...edit, picks: direction.shots.map(s => s.id), captions, dropped: direction.bug ? dropped : [...dropped, ...bugIds] }
+}

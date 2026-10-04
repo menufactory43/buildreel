@@ -5,19 +5,23 @@ import type { Cut, Edit, Lang, Moment, Recipe, Scene, Session } from '../types'
 import {
   CODE_FILE,
   activeTime,
+  applyDirection,
   applyEdit,
   buildScenes,
   classifyBash,
   cleanPost,
   clockTime,
   defaultRecipe,
+  directorPrompt,
   emptyEdit,
   formatDuration,
+  parseDirection,
   parseRecipe,
   pickLang,
   postPrompt,
   recipePrompt,
   relative,
+  runsElsewhere,
   imagesOf,
   isShot,
   runtime,
@@ -65,6 +69,10 @@ const UI = {
     post: 'Post pour X',
     rendering: (n: number) => `Montage de ${n} plans en cours (environ 30 s)…`,
     writingPost: 'Vidéo montée, Claude écrit le post…',
+    directing: 'Claude choisit les plans…',
+    directed: (n: number) => `Claude a choisi ${n} plans et écrit leurs textes.`,
+    directFailed: "Claude n'a pas pu choisir : les plans sont répartis sur la session.",
+    direct: '↻ Claude choisit',
     busyRender: 'Montage en cours…',
     alreadyRendering: 'Un montage est déjà en cours.',
     ready: (out: string) => `Vidéo prête : ${out}`,
@@ -113,6 +121,10 @@ const UI = {
     post: 'Post for X',
     rendering: (n: number) => `Rendering ${n} shots (about 30 s)…`,
     writingPost: 'Video cut, Claude is writing the post…',
+    directing: 'Claude is picking the shots…',
+    directed: (n: number) => `Claude picked ${n} shots and wrote their captions.`,
+    directFailed: 'Claude could not pick: shots are spread over the session.',
+    direct: '↻ Let Claude pick',
     busyRender: 'Rendering…',
     alreadyRendering: 'A render is already running.',
     ready: (out: string) => `Video ready: ${out}`,
@@ -135,6 +147,7 @@ const UI = {
 } as const
 
 let root = ''
+let home = ''
 let lang: Lang = 'en'
 let busy = false
 let lastCaptureAt = 0
@@ -169,7 +182,7 @@ async function ensureRecipe($: EngineInterface, session: Session, renew = false)
   const file = recipeFile(session)
   if (!renew && (await $.fs.exists(file))) {
     const held = parseRecipe(await $.fs.read(file), session.url)
-    if (held && held.pourquoi !== 'default') return held
+    if (held && held.why !== 'default') return held
   }
   // D'abord le Claude de la session, qui a l'historique en tête. Au tout début d'une session
   // reprise il n'a encore rien échangé : on lui montre alors les fichiers du projet.
@@ -184,7 +197,7 @@ async function ensureRecipe($: EngineInterface, session: Session, renew = false)
     })
     written = reply.isAnswered ? parseRecipe(reply.text, session.url) : null
   }
-  const recipe = written ?? { ...defaultRecipe(session.url), pourquoi: 'default' }
+  const recipe = written ?? { ...defaultRecipe(session.url), why: 'default' }
   await $.fs.write(file, JSON.stringify(recipe, null, 2))
   if (written) $.ui.toast(UI[lang].recipeBy(tilde(file)))
   return recipe
@@ -287,6 +300,15 @@ async function keepImage($: EngineInterface, data: string) {
   await record($, { id: `v${now}`, at: now, kind: 'capture', label: 'seen', image: answer.image, thumb: answer.thumb })
 }
 
+async function lastCommitSubject($: EngineInterface) {
+  try {
+    const ran = await $.process.run(['git', '-C', root, 'log', '-1', '--format=%s'], { timeoutMs: 5000 })
+    return ran.exitCode === 0 && ran.stdout.trim() ? ran.stdout.trim() : null
+  } catch {
+    return null
+  }
+}
+
 function scheduleCapture($: EngineInterface, delay: number) {
   pending?.cancel()
   pending = $.clock.after(delay, () => void capture($))
@@ -319,12 +341,22 @@ async function importSession($: EngineInterface) {
     if ((ev.tool === 'Edit' || ev.tool === 'Write') && ev.file && !ev.isError) {
       const file = relative(ev.file, root)
       moments.push({ id, at: ev.at, kind: 'edit', label: file, file })
-    } else if (ev.tool === 'Bash' && ev.command) {
+    } else if (ev.tool === 'Bash' && ev.command && !runsElsewhere(ev.command, root, home)) {
+      // Les commits viennent de git, plus bas : c'est la seule liste sûre.
       const moment = classifyBash(ev.command, ev.output, ev.isError, ev.at)
-      if (moment) moments.push({ ...moment, id })
+      if (moment && moment.kind !== 'commit') moments.push({ ...moment, id })
     }
   }
   const since = Math.min(events[0]?.at ?? session.startedAt, session.startedAt)
+
+  const log = await $.process.run(
+    ['git', '-C', root, 'log', '--no-merges', '--reverse', '--format=%H %ct %s', `--since=@${Math.floor(since / 1000)}`],
+    { timeoutMs: 10_000 },
+  )
+  for (const line of log.exitCode === 0 ? log.stdout.split('\n').filter(Boolean) : []) {
+    const [sha = '', ct = '0', ...subject] = line.split(' ')
+    moments.push({ id: `g${sha.slice(0, 7)}`, at: Number(ct) * 1000, kind: 'commit', label: subject.join(' ') })
+  }
 
   const recipe = await ensureRecipe($, session)
   let commits: CommitShot[] = []
@@ -336,9 +368,6 @@ async function importSession($: EngineInterface) {
     commits = JSON.parse(read2.stdout || '[]')
   }
   for (const c of commits) {
-    if (!moments.some(m => m.kind === 'commit' && m.label === c.label)) {
-      moments.push({ id: `g${c.sha.slice(0, 7)}`, at: c.at, kind: 'commit', label: c.label })
-    }
     if (c.image) {
       moments.push({
         id: `s${c.sha.slice(0, 7)}`,
@@ -358,6 +387,35 @@ async function importSession($: EngineInterface) {
   await update($, sessionRef, () => next)
   await save($, next)
   return t.caught(moments.length, clockTime(next.startedAt), commits.filter(c => c.image).length)
+}
+
+// Claude choisit les captures qui montrent un vrai progrès et écrit les textes pour un spectateur.
+// Les règles (captures réparties sur la session) restent là s'il ne répond pas.
+let directing = false
+async function direct($: EngineInterface) {
+  const t = UI[lang]
+  const session = await read($, sessionRef)
+  if (!session || directing) return
+  directing = true
+  try {
+    const edit = await read($, editRef)
+    const ids = session.moments.filter(m => m.kind === 'capture' && m.image).map(m => m.id)
+    if (ids.length === 0) return
+    await update($, editRef, ed => ({ ...ed, status: t.directing }))
+    const prompt = directorPrompt(lang, session, edit.from, edit.to)
+    const forked = await $.model.fork({ prompt })
+    let direction = forked.isAnswered ? parseDirection(forked.text, ids) : null
+    if (!direction) {
+      const reply = await $.model.complete({ model: 'sonnet', prompt, maxTokens: 900, timeoutMs: 90_000 })
+      direction = reply.isAnswered ? parseDirection(reply.text, ids) : null
+    }
+    const found = direction
+    await update($, editRef, ed =>
+      found ? { ...applyDirection(ed, found), status: t.directed(found.shots.length) } : { ...ed, picks: [], status: t.directFailed },
+    )
+  } finally {
+    directing = false
+  }
 }
 
 // Monte la vidéo avec les choix de la table de montage, puis demande au Claude de la session
@@ -385,9 +443,10 @@ async function renderReel($: EngineInterface) {
 
 async function renderOnce($: EngineInterface, session: Session) {
   const t = UI[lang]
+  if ((await read($, editRef)).picks === null) await direct($)
   const edit = await read($, editRef)
   const cuts = await read($, cutsRef)
-  const kept = applyEdit(buildScenes(session, edit.from, lang, edit.to), edit)
+  const kept = applyEdit(buildScenes(session, edit.from, lang, edit.to, edit.picks), edit)
   const now = await $.clock.now()
   const name = edit.name?.trim() || t.untitled(cuts.length + (edit.cutId ? 0 : 1))
   const out = `${session.dir}/${session.project}-${slug(name) || 'reel'}-${clockTime(now).replace(':', 'h')}.mp4`
@@ -440,6 +499,7 @@ async function detectUrl($: EngineInterface, cwd: string) {
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     root = await $.session.cwd()
+    home = (await $.env.get('HOME')) ?? ''
     lang = pickLang(options.lang, await $.env.get('LANG'))
     await $.command.register({ name: 'reel', description: UI[lang].description })
     if (!(await read($, sessionRef))) {
@@ -476,7 +536,10 @@ export const register: Register = (on, options) => {
       await record($, { id: `e${at}`, at, kind: 'edit', label: file, file })
       if (CODE_FILE.test(file)) scheduleCapture($, 4000)
     } else if (e.tool === 'Bash') {
-      const moment = classifyBash(e.command, ran.text ?? '', ran.isError === true, at)
+      if (runsElsewhere(e.command, root, home)) return ran
+      const found = classifyBash(e.command, ran.text ?? '', ran.isError === true, at)
+      // Le message d'un commit se lit dans git : ça marche quelle que soit la façon de l'écrire.
+      const moment = found?.kind === 'commit' ? { ...found, label: (await lastCommitSubject($)) ?? found.label } : found
       if (moment) {
         await record($, moment)
         if (moment.kind === 'commit' || moment.ok) scheduleCapture($, 1500)
@@ -514,7 +577,7 @@ export const register: Register = (on, options) => {
       const session = await read($, sessionRef)
       if (!session) return { text: t.none }
       const recipe = await ensureRecipe($, session, true)
-      return { text: `Buildreel: ${t.newRecipe(recipe.pourquoi ?? recipe.type, tilde(recipeFile(session)))}` }
+      return { text: `Buildreel: ${t.newRecipe(recipe.why ?? recipe.type, tilde(recipeFile(session)))}` }
     }
     if (args.startsWith('url ')) {
       const url = args.slice(4).trim()
@@ -526,6 +589,7 @@ export const register: Register = (on, options) => {
       return { text: t.nowUrl(url) }
     }
     await $.ui.open({ id: PANE, title: 'Buildreel', focus: true })
+    if ((await read($, editRef)).picks === null) $.clock.after(0, () => void direct($))
     return { text: t.opened }
   })
 
@@ -559,7 +623,7 @@ export const register: Register = (on, options) => {
 
     const cuts = await read($, cutsRef)
     const rendering = await read($, renderingRef)
-    const scenes = buildScenes(session, edit.from, lang, edit.to)
+    const scenes = buildScenes(session, edit.from, lang, edit.to, edit.picks)
     const kept = applyEdit(scenes, edit)
     const selected = scenes.find(s => s.id === edit.selected) ?? scenes[0]!
     const points = startPoints(session)
@@ -628,7 +692,16 @@ export const register: Register = (on, options) => {
               <Text> </Text>
             </Box>
           ))}
-          <Button key="new-cut" label={t.newCut} onPress={() => set(() => ({ ...emptyEdit }))} />
+          <Button
+            key="new-cut"
+            label={t.newCut}
+            onPress={async () => {
+              await set(() => ({ ...emptyEdit }))
+              void direct($)
+            }}
+          />
+          <Text> </Text>
+          <Button key="direct" label={t.direct} onPress={() => void direct($)} />
         </Box>
         {Input && (
           <Input

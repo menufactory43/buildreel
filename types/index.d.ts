@@ -45,6 +45,8 @@ export type Edit = {
   name: string | null
   from: number | null
   to: number | null
+  // Les captures choisies par Claude, dans l'ordre ; null tant qu'il n'a pas choisi.
+  picks: string[] | null
   title: string | null
   selected: string | null
   captions: Record<string, string>
@@ -64,17 +66,17 @@ declare module 'claude-code' {
 }
 
 export type RecipeStep =
-  | { touche: string; attendre?: number }
-  | { maintenir: string | string[]; ms?: number; attendre?: number }
-  | { clic: { x?: number; y?: number; bouton?: 'left' | 'right'; ms?: number }; attendre?: number }
-  | { defiler: number; attendre?: number }
-  | { attendre: number }
+  | { key: string; wait?: number }
+  | { hold: string | string[]; ms?: number; wait?: number }
+  | { click: { x?: number; y?: number; button?: 'left' | 'right'; ms?: number }; wait?: number }
+  | { scroll: number; wait?: number }
+  | { wait: number }
 
 export type Recipe = {
-  type: 'web' | 'ios' | 'mac' | 'aucun'
+  type: 'web' | 'ios' | 'mac' | 'none'
   url?: string
-  attente?: number
-  etapes?: RecipeStep[]
-  clip?: { secondes: number; etapes?: RecipeStep[] }
-  pourquoi?: string
+  delay?: number
+  steps?: RecipeStep[]
+  clip?: { seconds: number; steps?: RecipeStep[] }
+  why?: string
 }
