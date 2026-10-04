@@ -1,6 +1,6 @@
 // Logique pure de Buildreel : lire les actions de Claude, choisir les plans de la vidéo.
 // Pas de `$` ici, pour pouvoir tout tester sans moteur.
-import type { Edit, Lang, Moment, Recipe, Scene, Session } from '../types'
+import type { Cut, Edit, Lang, Moment, Recipe, Scene, Session } from '../types'
 
 const TEST_CMD = /\b(vitest|jest|pytest|(pnpm|npm|yarn|bun)( run)? test|swift test|cargo test|xcodebuild\b.*\btest)\b/
 const BUILD_CMD = /\b((pnpm|npm|yarn|bun)( run)? build|vite build|xcodebuild|swift build|cargo build)\b/
@@ -8,7 +8,10 @@ const COMMIT_CMD = /\bgit\b[^|;&]*\bcommit\b/
 export const CODE_FILE = /\.(ts|tsx|js|jsx|mjs|css|scss|html|svelte|vue|swift|txt|json)$/
 
 export const emptyEdit: Edit = {
+  cutId: null,
+  name: null,
   from: null,
+  to: null,
   title: null,
   selected: null,
   captions: {},
@@ -114,10 +117,10 @@ function spread<T>(items: T[], count: number): T[] {
 }
 
 // Choisit les plans à partir du journal. Le montage final applique ensuite les choix de la table de montage.
-export function buildScenes(session: Session, from: number | null, lang: Lang = 'fr'): Scene[] {
+export function buildScenes(session: Session, from: number | null, lang: Lang = 'fr', to: number | null = null): Scene[] {
   const w = WORDS[lang]
   const start = from ?? session.startedAt
-  const moments = session.moments.filter(m => m.at >= start)
+  const moments = session.moments.filter(m => m.at >= start && (to === null || m.at <= to))
   const end = moments.at(-1)?.at ?? start
   const shots = moments.filter(m => m.kind === 'capture' && m.image && !/^Merge /.test(m.label))
   const commits = moments.filter(m => m.kind === 'commit' && !/^Merge /.test(m.label))
@@ -201,6 +204,26 @@ export function buildScenes(session: Session, from: number | null, lang: Lang = 
     })
   }
   return scenes
+}
+
+// Nom de fichier lisible pour une coupe : « Le multijoueur ! » → « le-multijoueur ».
+export function slug(text: string) {
+  return text
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+}
+
+// Range la coupe en cours dans la liste : remplace celle qui a le même id, sinon l'ajoute.
+export function saveCut(cuts: Cut[], edit: Edit, fallbackName: string, renderedAt: number | null): { cuts: Cut[]; cut: Cut } {
+  const id = edit.cutId ?? `cut${cuts.length + 1}-${renderedAt ?? 0}`
+  const name = edit.name?.trim() || fallbackName
+  const previous = cuts.find(c => c.id === id)
+  const cut: Cut = { ...edit, cutId: id, id, name, renderedAt: renderedAt ?? previous?.renderedAt ?? null }
+  return { cuts: previous ? cuts.map(c => (c.id === id ? cut : c)) : [...cuts, cut], cut }
 }
 
 export function applyEdit(scenes: Scene[], edit: Edit) {

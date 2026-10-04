@@ -41,7 +41,10 @@ export type Scene = {
 }
 
 export type Edit = {
+  cutId: string | null
+  name: string | null
   from: number | null
+  to: number | null
   title: string | null
   selected: string | null
   captions: Record<string, string>
@@ -51,9 +54,12 @@ export type Edit = {
   post: string | null
 }
 
+// Une coupe : une vidéo de la session, avec ses propres bornes, plans et textes.
+export type Cut = Edit & { id: string; name: string; renderedAt: number | null }
+
 declare module 'claude-code' {
   interface PluginState {
-    buildreel: { session: Session | null; edit: Edit }
+    buildreel: { session: Session | null; edit: Edit; cuts: Cut[] }
   }
 }
 

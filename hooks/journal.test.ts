@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Session } from '../types'
-import { applyEdit, buildScenes, classifyBash, emptyEdit, parseRecipe, shorten } from './journal'
+import { applyEdit, buildScenes, classifyBash, emptyEdit, parseRecipe, saveCut, shorten, slug } from './journal'
 
 const session: Session = {
   project: 'couleur',
@@ -70,4 +70,16 @@ test('compte les tests, pas les fichiers de test, et coupe les commits trop long
   expect(red?.failed).toBe(2)
   expect(shorten('Étapes 3 et 4 : dangers, fantômes, pigments, menus et niveaux 2 à 5').length <= 53).toBe(true)
   expect(shorten('Court')).toBe('Court')
+})
+
+test('une coupe a sa fin, son nom de fichier, et se range sans écraser les autres', async () => {
+  const scenes = buildScenes(session, null, 'fr', 3500)
+  expect(scenes.filter(s => s.kind === 'shot').map(s => s.id)).toEqual(['c1'])
+  expect(scenes.some(s => s.kind === 'bug-red')).toBe(false)
+  expect(slug('Le multijoueur, enfin !')).toBe('le-multijoueur-enfin')
+  const first = saveCut([], { ...emptyEdit, name: 'Graphismes', to: 3500 }, 'Coupe 1', 10)
+  const second = saveCut(first.cuts, { ...emptyEdit, name: 'Multijoueur', from: 3500 }, 'Coupe 2', 20)
+  expect(second.cuts.map(c => c.name)).toEqual(['Graphismes', 'Multijoueur'])
+  const again = saveCut(second.cuts, { ...first.cut, name: 'Les graphismes' }, 'x', 30)
+  expect(again.cuts.map(c => c.name)).toEqual(['Les graphismes', 'Multijoueur'])
 })

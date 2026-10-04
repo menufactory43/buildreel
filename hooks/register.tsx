@@ -1,7 +1,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { Edit, Lang, Moment, Recipe, Scene, Session } from '../types'
+import type { Cut, Edit, Lang, Moment, Recipe, Scene, Session } from '../types'
 import {
   CODE_FILE,
   applyEdit,
@@ -18,12 +18,15 @@ import {
   recipePrompt,
   relative,
   runtime,
+  saveCut,
+  slug,
   startPoints,
 } from './journal'
 
 const PANE = 'buildreel-table'
 const sessionRef = atom({ plugin: 'buildreel', key: 'session' } as const, null)
 const editRef = atom({ plugin: 'buildreel', key: 'edit' } as const, emptyEdit)
+const cutsRef = atom({ plugin: 'buildreel', key: 'cuts' } as const, [] as Cut[])
 
 const CAPTURE_GAP_MS = 45_000
 
@@ -39,7 +42,14 @@ const UI = {
     plans: (n: number, s: number) => `${n} plans · ${s} s`,
     local: (dir: string) => `Rien n'est partagé : tout reste dans ${dir}.`,
     start: 'Départ',
+    end: 'Fin',
     sessionStart: 'début de la session',
+    sessionEnd: 'fin de la session',
+    cuts: 'Coupes',
+    newCut: '+ Nouvelle coupe',
+    cutName: 'Nom de la coupe : ',
+    untitled: (n: number) => `Coupe ${n}`,
+    rendered: 'vidéo prête',
     capture: 'capture',
     captionOf: (i: number) => `Texte du plan ${i} : `,
     keep: 'garder',
@@ -75,7 +85,14 @@ const UI = {
     plans: (n: number, s: number) => `${n} shots · ${s} s`,
     local: (dir: string) => `Nothing is shared: everything stays in ${dir}.`,
     start: 'Start',
+    end: 'End',
     sessionStart: 'start of the session',
+    sessionEnd: 'end of the session',
+    cuts: 'Cuts',
+    newCut: '+ New cut',
+    cutName: 'Name of the cut: ',
+    untitled: (n: number) => `Cut ${n}`,
+    rendered: 'video ready',
     capture: 'shot',
     captionOf: (i: number) => `Text of shot ${i}: `,
     keep: 'keep',
@@ -307,9 +324,11 @@ async function renderReel($: EngineInterface) {
   const session = await read($, sessionRef)
   if (!session) return t.none
   const edit = await read($, editRef)
-  const kept = applyEdit(buildScenes(session, edit.from, lang), edit)
+  const cuts = await read($, cutsRef)
+  const kept = applyEdit(buildScenes(session, edit.from, lang, edit.to), edit)
   const now = await $.clock.now()
-  const out = `${session.dir}/${session.project}-reel-${clockTime(now).replace(':', 'h')}.mp4`
+  const name = edit.name?.trim() || t.untitled(cuts.length + (edit.cutId ? 0 : 1))
+  const out = `${session.dir}/${session.project}-${slug(name) || 'reel'}-${clockTime(now).replace(':', 'h')}.mp4`
   const planPath = `${session.dir}/plan.json`
   await $.fs.write(planPath, JSON.stringify({ project: session.project, lang, scenes: kept }, null, 1))
   await update($, editRef, ed => ({ ...ed, status: t.rendering(kept.length), output: null, post: null }))
@@ -332,7 +351,11 @@ async function renderReel($: EngineInterface) {
     post = reply.isAnswered ? cleanPost(reply.text) : null
   }
   if (post) await $.fs.write(out.replace(/\.mp4$/, '.txt'), post + '\n')
-  await update($, editRef, ed => ({ ...ed, status: t.ready(tilde(out)), output: out, post }))
+  const done = { ...(await read($, editRef)), name, status: t.ready(tilde(out)), output: out, post }
+  const saved = saveCut(await read($, cutsRef), done, name, now)
+  await update($, cutsRef, () => saved.cuts)
+  await update($, editRef, () => ({ ...done, cutId: saved.cut.id }))
+  await $.fs.write(`${session.dir}/cuts.json`, JSON.stringify(saved.cuts, null, 1))
   return post ? `${t.ready(tilde(out))}\n\n${post}` : t.ready(tilde(out))
 }
 
@@ -368,6 +391,10 @@ export const register: Register = (on, options) => {
         : { project, dir, url: await detectUrl($, root), startedAt: now, moments: [] }
       await update($, sessionRef, () => session)
       await save($, session)
+      if (await $.fs.exists(`${dir}/cuts.json`)) {
+        const cuts: Cut[] = JSON.parse(await $.fs.read(`${dir}/cuts.json`))
+        await update($, cutsRef, () => cuts)
+      }
     }
     return next(e)
   })
@@ -450,7 +477,8 @@ export const register: Register = (on, options) => {
     const edit = await read($, editRef)
     if (!session) return <Text dimColor>{t.noSession}</Text>
 
-    const scenes = buildScenes(session, edit.from, lang)
+    const cuts = await read($, cutsRef)
+    const scenes = buildScenes(session, edit.from, lang, edit.to)
     const kept = applyEdit(scenes, edit)
     const selected = scenes.find(s => s.id === edit.selected) ?? scenes[0]!
     const points = startPoints(session)
@@ -458,12 +486,24 @@ export const register: Register = (on, options) => {
     const startMoment = session.moments.find(m => m.at === start)
     const set = (fn: (edit: Edit) => Edit) => update($, editRef, fn)
 
+    const lastAt = session.moments.at(-1)?.at ?? session.startedAt
     const moveStart = (step: number) =>
       set(ed => {
-        const i = Math.max(0, points.indexOf(ed.from ?? session.startedAt))
-        const at = points[Math.min(points.length - 1, Math.max(0, i + step))] ?? session.startedAt
+        const allowed = points.filter(p => ed.to === null || p < ed.to)
+        const i = Math.max(0, allowed.indexOf(ed.from ?? session.startedAt))
+        const at = allowed[Math.min(allowed.length - 1, Math.max(0, i + step))] ?? session.startedAt
         return { ...ed, from: at === session.startedAt ? null : at }
       })
+    // La fin se règle sur les mêmes repères ; tout au bout, c'est « fin de la session » (null).
+    const moveEnd = (step: number) =>
+      set(ed => {
+        const begin = ed.from ?? session.startedAt
+        const allowed = [...points.filter(p => p > begin), lastAt].filter((p, i, all) => all.indexOf(p) === i)
+        const i = ed.to === null ? allowed.length - 1 : Math.max(0, allowed.indexOf(ed.to))
+        const at = allowed[Math.min(allowed.length - 1, Math.max(0, i + step))] ?? lastAt
+        return { ...ed, to: at === lastAt ? null : at }
+      })
+    const endMoment = edit.to === null ? null : session.moments.find(m => m.at === edit.to)
 
     let thumb: string | null = null
     if (selected.thumb && Image) {
@@ -494,6 +534,31 @@ export const register: Register = (on, options) => {
         <Text dimColor>{t.local(tilde(session.dir))}</Text>
         <Text> </Text>
         <Box>
+          <Text>{t.cuts} </Text>
+          {cuts.map(cut => (
+            <Box key={`cutbox-${cut.id}`}>
+              <Button
+                key={`cut-${cut.id}`}
+                variant={cut.id === edit.cutId ? 'primary' : 'secondary'}
+                label={`${cut.name}${cut.output ? ' ✓' : ''}`}
+                onPress={() => set(() => ({ ...cut, cutId: cut.id, status: cut.output ? t.ready(tilde(cut.output)) : null }))}
+              />
+              <Text> </Text>
+            </Box>
+          ))}
+          <Button key="new-cut" label={t.newCut} onPress={() => set(() => ({ ...emptyEdit }))} />
+        </Box>
+        {Input && (
+          <Input
+            key="cut-name"
+            label={t.cutName}
+            value={edit.name ?? t.untitled(cuts.length + (edit.cutId ? 0 : 1))}
+            submitLabel={t.keep}
+            onSubmit={(value: string) => set(ed => ({ ...ed, name: value.trim() || null }))}
+          />
+        )}
+        <Text> </Text>
+        <Box>
           <Text>{t.start} </Text>
           <Button key="from-prev" label="◀" onPress={() => moveStart(-1)} />
           <Text>
@@ -501,6 +566,20 @@ export const register: Register = (on, options) => {
             {clockTime(start)} {startLabel}{' '}
           </Text>
           <Button key="from-next" label="▶" onPress={() => moveStart(1)} />
+        </Box>
+        <Box>
+          <Text>{t.end} </Text>
+          <Button key="to-prev" label="◀" onPress={() => moveEnd(-1)} />
+          <Text>
+            {' '}
+            {clockTime(edit.to ?? lastAt)}{' '}
+            {edit.to === null
+              ? `· ${t.sessionEnd}`
+              : endMoment?.kind === 'commit'
+                ? `· ${endMoment.label}`
+                : `· ${t.capture}`}{' '}
+          </Text>
+          <Button key="to-next" label="▶" onPress={() => moveEnd(1)} />
         </Box>
         <Text> </Text>
         {scenes.map((scene, i) => {

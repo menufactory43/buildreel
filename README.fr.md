@@ -30,6 +30,8 @@ Il faut macOS, Google Chrome (ou Chromium, ou Brave), ffmpeg avec libx264 (`brew
 | `/reel recette` | Demande à Claude de réécrire la recette de capture. |
 | `/reel url <adresse>` | Filme une autre adresse. |
 
+Une session peut donner plusieurs vidéos : dans la table de montage, chaque coupe a son nom, son début et sa fin (de commit en commit), ses plans, ses textes, sa vidéo et son post. « + Nouvelle coupe » en commence une autre.
+
 La table de montage, les textes de la vidéo et le post suivent la langue de ton système. Tu peux la forcer avec `/plugin configure buildreel@buildreel`.
 
 ## Comment il filme n'importe quelle app

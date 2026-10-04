@@ -49,12 +49,13 @@ Work as usual. A `● REC` band above the prompt shows the session time, the mom
 
 ### The editing table
 
-- **Start ◀ ▶** moves the first frame from commit to commit, so the video can skip the setup.
+- **Cuts**: one session can give several videos. Each cut keeps its own name, bounds, shots, captions, video and post. **+ New cut** starts another, a click on a cut brings it back to retouch and render again.
+- **Start ◀ ▶** and **End ◀ ▶** frame the moment you want, from commit to commit: just the art pass, just the multiplayer evening.
 - **`[x]` / `[ ]`** keeps or drops a shot: hook, app shots, the failing tests that went green, the numbers, the ending.
 - **Text of shot N** rewrites the caption of the selected shot. Captions come from your commit messages, never from file paths.
 - **Render the video**, then **Open**, **Show in Finder** and **Copy the post**.
 
-Everything lands in `~/Movies/buildreel/<project>/<date>/`: the journal, every shot and clip, each render and its post as a `.txt`.
+Everything lands in `~/Movies/buildreel/<project>/<date>/`: the journal, every shot and clip, each render (named after its cut, like `couleur-multiplayer-21h40.mp4`) with its post as a `.txt`, and `cuts.json`.
 
 ## How it films any app
 
