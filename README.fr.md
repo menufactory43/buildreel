@@ -36,7 +36,9 @@ La table de montage, les textes de la vidéo et le post suivent la langue de ton
 
 ## Comment il filme n'importe quelle app
 
-Chaque capture ouvre l'app dans un Chrome neuf et invisible, qui tomberait toujours sur l'écran d'accueil. Buildreel demande donc au Claude de ta session comment montrer l'app : c'est lui qui l'a construite. Sa réponse, la recette, est enregistrée une fois par projet dans `~/Movies/buildreel/<projet>/recipe.json` et se modifie à la main. Le détail est dans le [README anglais](README.md#how-it-films-any-app).
+Chaque capture ouvre l'app dans un Chrome neuf et invisible, qui tomberait toujours sur l'écran d'accueil. Buildreel demande donc au Claude de ta session comment montrer l'app : c'est lui qui l'a construite. Sa réponse, la recette, est enregistrée une fois par projet dans `~/Movies/buildreel/<projet>/recipe.json` et se modifie à la main.
+
+Buildreel garde aussi les captures que ta session prend déjà pour vérifier son travail (outil de navigateur, `screencapture`, capture qu'elle ouvre). Pour une app iOS ou Mac, c'est la seule source d'images : Buildreel ne lance jamais de simulateur et ne compile rien. Le détail est dans le [README anglais](README.md#how-it-films-any-app).
 
 ## Confidentialité
 

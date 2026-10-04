@@ -17,6 +17,8 @@ import {
   postPrompt,
   recipePrompt,
   relative,
+  imagesOf,
+  isShot,
   runtime,
   saveCut,
   slug,
@@ -244,6 +246,29 @@ async function capture($: EngineInterface, force = false) {
   }
 }
 
+// ─── Ce que la session regarde ──────────────────────────────────────────────
+// Quand Claude teste son travail, l'app est dans l'état qui vaut le coup : on garde les captures
+// qu'il prend pour vérifier son travail.
+
+const SESSION_GAP_MS = 15_000
+
+const toolInputs = new Map<string, { tool: string; file?: string }>()
+let lastKeptAt = 0
+let lastKeptHash = ''
+
+async function keepImage($: EngineInterface, data: string) {
+  const session = await read($, sessionRef)
+  const now = await $.clock.now()
+  if (!session || now - lastKeptAt < SESSION_GAP_MS) return
+  lastKeptAt = now
+  const base = `${session.dir}/seen-${now}`
+  const ran = await $.process.run(['node', `${$.plugin.root}/bin/keep.mjs`, base, lastKeptHash], { stdin: data, timeoutMs: 30_000 })
+  const answer = JSON.parse(ran.stdout || '{"ok":false}')
+  if (!answer.ok) return
+  lastKeptHash = answer.hash
+  await record($, { id: `v${now}`, at: now, kind: 'capture', label: 'seen', image: answer.image, thumb: answer.thumb })
+}
+
 function scheduleCapture($: EngineInterface, delay: number) {
   pending?.cancel()
   pending = $.clock.after(delay, () => void capture($))
@@ -400,6 +425,8 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', async ($, e, next) => {
+    toolInputs.set(e.tool_use_id, { tool: String(e.tool), file: e.tool === 'Read' ? e.file_path : undefined })
+    if (toolInputs.size > 200) toolInputs.delete(toolInputs.keys().next().value!)
     const ran = await next(e)
     if (ran.deny !== undefined) return ran
     const at = await $.clock.now()
@@ -416,6 +443,20 @@ export const register: Register = (on, options) => {
       }
     }
     return ran
+  })
+
+  on('session.append', async ($, e, next) => {
+    const stored = await next(e)
+    if (e.origin.kind === 'tool' && e.door === 'tool-result') {
+      const session = await read($, sessionRef)
+      const origin = e.origin.tool
+      const shots = session
+        ? imagesOf(e.message.content).filter(img => isShot(img.toolUseId ? toolInputs.get(img.toolUseId) : undefined, origin, session.dir))
+        : []
+      const last = shots.at(-1)
+      if (last) $.clock.after(0, () => void keepImage($, last.data))
+    }
+    return stored
   })
 
   on('command.run', { command: 'reel' }, async ($, e) => {

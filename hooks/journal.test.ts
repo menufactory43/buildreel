@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { Session } from '../types'
-import { applyEdit, buildScenes, classifyBash, emptyEdit, parseRecipe, saveCut, shorten, slug } from './journal'
+import { applyEdit, buildScenes, classifyBash, emptyEdit, imagesOf, isShot, parseRecipe, saveCut, shorten, slug } from './journal'
 
 const session: Session = {
   project: 'couleur',
@@ -82,4 +82,17 @@ test('une coupe a sa fin, son nom de fichier, et se range sans écraser les autr
   expect(second.cuts.map(c => c.name)).toEqual(['Graphismes', 'Multijoueur'])
   const again = saveCut(second.cuts, { ...first.cut, name: 'Les graphismes' }, 'x', 30)
   expect(again.cuts.map(c => c.name)).toEqual(['Les graphismes', 'Multijoueur'])
+})
+
+test("garde les captures que la session regarde, pas les maquettes ni ses propres fichiers", async () => {
+  expect(isShot({ tool: 'Read', file: '/tmp/woofdoku-shot.png' }, 'Read', '/Users/x/Movies/buildreel/w')).toBe(true)
+  expect(isShot({ tool: 'Read', file: '/Users/x/app/Assets.xcassets/AppIcon.png' }, 'Read', '/m')).toBe(false)
+  expect(isShot({ tool: 'Read', file: '/Users/x/Movies/buildreel/w/shot-1.png' }, 'Read', '/Users/x/Movies/buildreel/w')).toBe(false)
+  expect(isShot(undefined, 'mcp__claude-in-chrome__computer', '/m')).toBe(true)
+  expect(isShot(undefined, 'mcp__notion__fetch', '/m')).toBe(false)
+  const found = imagesOf([
+    { type: 'tool_result', tool_use_id: 't1', content: [{ type: 'image', source: { type: 'base64', data: 'AAA' } }] },
+    { type: 'text', text: 'rien' },
+  ])
+  expect(found).toEqual([{ toolUseId: 't1', data: 'AAA' }])
 })

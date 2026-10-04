@@ -28,8 +28,9 @@ body{background:#12131a;color:#fff;font-family:-apple-system,"SF Pro Display","H
 .bg{position:absolute;inset:-80px;background-size:cover;background-position:center;filter:blur(46px) brightness(.42) saturate(1.3)}
 .cap{position:absolute;left:70px;right:70px;top:300px;font-weight:900;font-size:86px;line-height:1.04;letter-spacing:-2px;text-wrap:balance;text-shadow:0 6px 30px #0009}
 .cap mark{background:#f2a93b;color:#14151c;padding:0 14px;border-radius:12px}
-.shot{position:absolute;left:40px;right:40px;top:760px;border-radius:14px;overflow:hidden;box-shadow:0 40px 90px #000c;border:4px solid #ffffff22}
-.shot img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover}
+.shot{position:absolute;border-radius:14px;overflow:hidden;box-shadow:0 40px 90px #000c;border:4px solid #ffffff22}
+.shot.tall{border-radius:44px;border-width:10px;border-color:#0b0c10}
+.shot img{display:block;width:100%;height:100%;object-fit:cover}
 .chip{position:absolute;top:150px;left:70px;font:700 34px ui-monospace,Menlo,monospace;background:#000a;color:#f2a93b;padding:8px 18px;border-radius:12px}
 .wm{position:absolute;bottom:120px;left:0;right:0;text-align:center;font:600 30px ui-monospace,Menlo,monospace;color:#ffffff80;letter-spacing:2px}
 .center{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;padding:0 80px;gap:40px}
@@ -45,6 +46,30 @@ body{background:#12131a;color:#fff;font-family:-apple-system,"SF Pro Display","H
 .tiles small{display:block;font-size:36px;font-weight:600;color:#ffffffa0;margin-top:16px}
 `
 
+// Où poser la capture dans le cadre 1080×1920 : paysage (web, Mac) en pleine largeur,
+// portrait (iPhone) en téléphone centré. Le même rectangle sert à poser le clip par-dessus.
+function frameRect(file) {
+  let w = 16
+  let h = 9
+  try {
+    const info = execFileSync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', file], { encoding: 'utf8' })
+    w = Number(info.match(/pixelWidth: (\d+)/)?.[1]) || w
+    h = Number(info.match(/pixelHeight: (\d+)/)?.[1]) || h
+  } catch {
+    // image illisible : on garde le 16:9
+  }
+  if (h > w) {
+    const border = 10
+    const height = 1140
+    const width = Math.round((height * w) / h)
+    return { tall: true, border, x: Math.round((1080 - width) / 2) - border, y: 650, w: width, h: height }
+  }
+  const border = 4
+  const width = 1000 - 2 * border
+  return { tall: false, border, x: 40, y: 760, w: width, h: Math.round((width * h) / w) }
+}
+
+const rects = []
 function page(scene, i) {
   const wm = `<div class="wm">${en ? 'made with buildreel' : 'monté avec buildreel'}</div>`
   const mark = (text, hl) => (hl && text.includes(hl) ? esc(text).replace(esc(hl), `<mark>${esc(hl)}</mark>`) : esc(text))
@@ -55,7 +80,10 @@ function page(scene, i) {
     body = `<div class="center"><div class="sub">${esc(plan.project.charAt(0).toUpperCase() + plan.project.slice(1))} · timelapse</div><div class="title">${words}</div></div>`
   } else if (scene.kind === 'shot' || scene.kind === 'final') {
     const cap = mark(scene.caption, scene.highlight)
-    body = `<div class="bg" style="background-image:url('${img(scene.image)}')"></div>${chip}<div class="cap">${cap}</div><div class="shot"><img src="${img(scene.image)}"></div>`
+    const r = frameRect(scene.image)
+    rects[i] = r
+    const box = `left:${r.x}px;top:${r.y}px;width:${r.w + 2 * r.border}px;height:${r.h + 2 * r.border}px`
+    body = `<div class="bg" style="background-image:url('${img(scene.image)}')"></div>${chip}<div class="cap">${cap}</div><div class="shot${r.tall ? ' tall' : ''}" style="${box}"><img src="${img(scene.image)}"></div>`
   } else if (scene.kind === 'bug-red' || scene.kind === 'bug-green') {
     const cls = scene.kind === 'bug-red' ? 'red' : 'green'
     body = `${chip}<div class="center ${cls}"><div class="title">${esc(scene.caption)}</div><div class="rows">${(scene.lines ?? []).map(l => `<div>${esc(l)}</div>`).join('')}</div></div>`
@@ -76,8 +104,6 @@ for (const [i, scene] of plan.scenes.entries()) {
   process.stderr.write(`plan ${i + 1}/${plan.scenes.length}\n`)
 }
 
-// Emplacement de la capture dans le cadre 1080×1920 (voir .shot : 40 px de marge, bordure de 4 px, 16:9).
-const HOLE = { x: 44, y: 764, w: 992, h: 558 }
 const inputs = []
 const chains = []
 let n = 0
@@ -92,8 +118,9 @@ pngs.forEach((p, i) => {
   const clip = n++
   inputs.push('-stream_loop', '-1', '-t', String(p.seconds), '-i', p.clip)
   chains.push(`[${card}:v]scale=1080:1920,fps=${FPS},setsar=1[c${i}]`)
-  chains.push(`[${clip}:v]scale=${HOLE.w}:${HOLE.h},fps=${FPS},setsar=1,setpts=PTS-STARTPTS[k${i}]`)
-  chains.push(`[c${i}][k${i}]overlay=${HOLE.x}:${HOLE.y}:eof_action=repeat,trim=duration=${p.seconds},setpts=PTS-STARTPTS,format=yuv420p[v${i}]`)
+  const r = rects[i]
+  chains.push(`[${clip}:v]scale=${r.w}:${r.h}:force_original_aspect_ratio=increase,crop=${r.w}:${r.h},fps=${FPS},setsar=1,setpts=PTS-STARTPTS[k${i}]`)
+  chains.push(`[c${i}][k${i}]overlay=${r.x + r.border}:${r.y + r.border}:eof_action=repeat,trim=duration=${p.seconds},setpts=PTS-STARTPTS,format=yuv420p[v${i}]`)
 })
 let last = 'v0'
 let offset = 0

@@ -79,6 +79,8 @@ A fresh, invisible Chrome opens your app for every shot, so it would always land
 
 `etapes` run before filming, `clip.etapes` while a short clip is recorded. Steps are `touche` (press a key), `maintenir` (hold one or more keys for `ms`), `clic` (x and y from 0 to 1, left or right button), `defiler` (scroll) and `attendre` (wait). Edit the file by hand whenever you like. Shots with a clip play it in the video instead of a still.
 
+Buildreel also keeps the screenshots your session already takes to check its work (a browser tool, `screencapture`, a simulator screenshot it opens). Those show the app in the state that matters, right after a change. Mockups, icons and assets are left out, and so are Buildreel's own files.
+
 The dev server address is read from `vite.config.*` (Next.js and Astro defaults otherwise). If Claude is not reachable, Buildreel falls back to a plain recipe and keeps going.
 
 ## Privacy
@@ -95,7 +97,7 @@ The dev server address is read from `vite.config.*` (Next.js and Astro defaults 
 
 ## Limits
 
-- Filming works for web apps today. iOS (simulator) and Mac apps are next. For anything else (CLI, library, back end) the video is built from the session itself: tests, commits and numbers.
+- Buildreel films web apps itself. For native apps (iOS, Mac) it only keeps the screenshots your session takes while testing. It never starts a simulator or builds anything. With no screenshot at all (CLI, library, back end), the video is built from the session itself: tests, commits and numbers.
 - macOS only for now (it uses `sips` and `open`).
 - No music: add a trending sound when you post, as the platforms prefer.
 

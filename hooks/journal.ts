@@ -325,3 +325,37 @@ export function postPrompt(lang: Lang, scenes: Scene[]) {
 export function cleanPost(text: string) {
   return text.trim().replace(/^```\w*\n?|```$/g, '').replace(/^["«]\s*|\s*["»]$/g, '').trim().slice(0, 280)
 }
+
+// ─── Ce que la session regarde ──────────────────────────────────────────────
+
+const SHOT_TOOL = /screenshot|screen|snapshot|simulator|simctl|computer|browser|chrome|playwright|puppeteer|xcode|ios|preview|capture/i
+const SHOT_FILE = /screenshot|screen[ _-]?shot|capture|simulator|\bsim[-_]|shot|frame|\/tmp\/|\/var\/folders\/|scratchpad/i
+const ASSET_FILE = /assets?\b|xcassets|\/public\/|\/docs\/|icon|logo|mockup|maquette|design/i
+
+export function isShot(info: { tool: string; file?: string } | undefined, tool: string, dir: string) {
+  const name = info?.tool ?? tool
+  if (name === 'Read') {
+    const file = info?.file ?? ''
+    return !file.startsWith(dir) && SHOT_FILE.test(file) && !ASSET_FILE.test(file)
+  }
+  return SHOT_TOOL.test(name)
+}
+
+export function imagesOf(content: readonly { type: string; [field: string]: unknown }[]) {
+  const found: { toolUseId?: string; data: string }[] = []
+  const take = (block: { type: string; [field: string]: unknown }, toolUseId?: string) => {
+    const source = block.source as { type?: string; data?: string } | undefined
+    if (block.type === 'image' && source?.type === 'base64' && typeof source.data === 'string') {
+      found.push({ toolUseId, data: source.data })
+    }
+  }
+  for (const block of content) {
+    if (block.type === 'tool_result' && Array.isArray(block.content)) {
+      for (const inner of block.content as { type: string; [field: string]: unknown }[]) take(inner, String(block.tool_use_id))
+    } else {
+      take(block)
+    }
+  }
+  return found
+}
+
