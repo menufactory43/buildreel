@@ -55,11 +55,11 @@ const UI = {
     sessionEnd: 'fin de la session',
     cuts: 'Coupes',
     newCut: '+ Nouvelle coupe',
-    cutName: 'Nom de la coupe : ',
+    cutName: 'Nom de la coupe',
     untitled: (n: number) => `Coupe ${n}`,
     rendered: 'vidéo prête',
     capture: 'capture',
-    captionOf: (i: number) => `Texte du plan ${i} : `,
+    captionOf: (i: number) => `Texte du plan ${i}`,
     keep: 'garder',
     render: 'Monter la vidéo',
     open: 'Ouvrir',
@@ -91,6 +91,7 @@ const UI = {
     serverOff: (url: string) =>
       `Buildreel : rien ne répond sur ${url}. Lance ton serveur de dev pour les captures, ou indique la bonne adresse avec /reel url <adresse>.`,
     none: 'aucune session',
+    notProject: "Buildreel n'enregistre que dans un projet (un dépôt git). Lance Claude Code dans le dossier de ton app.",
   },
   en: {
     kind: { hook: 'Hook', shot: 'Shot', 'bug-red': 'Bug', 'bug-green': 'Fixed', stats: 'Numbers', final: 'Ending' },
@@ -107,11 +108,11 @@ const UI = {
     sessionEnd: 'end of the session',
     cuts: 'Cuts',
     newCut: '+ New cut',
-    cutName: 'Name of the cut: ',
+    cutName: 'Name of the cut',
     untitled: (n: number) => `Cut ${n}`,
     rendered: 'video ready',
     capture: 'shot',
-    captionOf: (i: number) => `Text of shot ${i}: `,
+    captionOf: (i: number) => `Text of shot ${i}`,
     keep: 'keep',
     render: 'Render the video',
     open: 'Open',
@@ -143,11 +144,14 @@ const UI = {
     serverOff: (url: string) =>
       `Buildreel: nothing answers on ${url}. Start your dev server to get shots, or point to the right address with /reel url <address>.`,
     none: 'no session',
+    notProject: 'Buildreel only records inside a project (a git repository). Start Claude Code in your app folder.',
   },
 } as const
 
 let root = ''
 let home = ''
+// Hors d'un dépôt git (le dossier personnel, /tmp…), il n'y a pas d'app à raconter : le mod se tait.
+let active = false
 let lang: Lang = 'en'
 let busy = false
 let lastCaptureAt = 0
@@ -498,11 +502,14 @@ async function detectUrl($: EngineInterface, cwd: string) {
 
 export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
-    root = await $.session.cwd()
     home = (await $.env.get('HOME')) ?? ''
     lang = pickLang(options.lang, await $.env.get('LANG'))
     await $.command.register({ name: 'reel', description: UI[lang].description })
-    if (!(await read($, sessionRef))) {
+    const cwd = await $.session.cwd()
+    const top = await $.process.run(['git', '-C', cwd, 'rev-parse', '--show-toplevel'], { timeoutMs: 5000 }).catch(() => null)
+    root = top?.exitCode === 0 ? top.stdout.trim() : ''
+    active = root !== '' && root !== home
+    if (active && !(await read($, sessionRef))) {
       const home = (await $.env.get('HOME')) ?? '/tmp'
       const project = root.split('/').pop() || 'project'
       const now = await $.clock.now()
@@ -525,6 +532,7 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', async ($, e, next) => {
+    if (!active) return next(e)
     toolInputs.set(e.tool_use_id, { tool: String(e.tool), file: e.tool === 'Read' ? e.file_path : undefined })
     if (toolInputs.size > 200) toolInputs.delete(toolInputs.keys().next().value!)
     const ran = await next(e)
@@ -550,6 +558,7 @@ export const register: Register = (on, options) => {
 
   on('session.append', async ($, e, next) => {
     const stored = await next(e)
+    if (!active) return stored
     if (e.origin.kind === 'tool' && e.door === 'tool-result') {
       const session = await read($, sessionRef)
       const origin = e.origin.tool
@@ -564,6 +573,7 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'reel' }, async ($, e) => {
     const t = UI[lang]
+    if (!active) return { text: t.notProject }
     const args = (e.args ?? '').trim()
     if (args === 'import') {
       $.ui.toast(t.importing)
@@ -595,7 +605,7 @@ export const register: Register = (on, options) => {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const session = await read($, sessionRef)
-    if (!session || session.moments.length === 0 || e.props.hasSurvey) return next(e)
+    if (!active || !session || session.moments.length === 0 || e.props.hasSurvey) return next(e)
     const t = UI[lang]
     const { Box, Text } = $.ui.resolve(e)
     const shots = session.moments.filter(m => m.kind === 'capture').length
@@ -619,6 +629,7 @@ export const register: Register = (on, options) => {
     const Image = e.surface === 'terminal' ? $.ui.resolve(e).Image : null
     const session = await read($, sessionRef)
     const edit = await read($, editRef)
+    if (!active) return <Text dimColor>{t.notProject}</Text>
     if (!session) return <Text dimColor>{t.noSession}</Text>
 
     const cuts = await read($, cutsRef)
