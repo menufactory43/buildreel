@@ -1,6 +1,6 @@
 {
   "name": "buildreel",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Turns your Claude Code session into a 30-second build-in-public video: it records the moments, films your app, and gives you an editing table before anything is shared.",
   "types": "./types/index.d.ts",
   "author": {
@@ -12,12 +12,7 @@
     "lang": {
       "type": "string",
       "title": "Language",
-      "description": "Language of the editing table and the video (auto follows your system).",
-      "options": [
-        "auto",
-        "en",
-        "fr"
-      ],
+      "description": "Language of the editing table and the video: auto (follows your system), en or fr.",
       "default": "auto"
     }
   }

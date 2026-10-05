@@ -100,6 +100,13 @@ The dev server address is read from `vite.config.*` (Next.js and Astro defaults 
 - `/reel import` reads this project's session history from `~/.claude/projects/` on your machine.
 - Old commits are filmed from a temporary `git worktree`, removed right after. Your working tree is never touched.
 
+## What it runs, reads and writes
+
+- **Programs it starts**, always from its own `bin/` folder with Node: `shoot.mjs` and `chrome.mjs` open a fresh, invisible Google Chrome on your dev server (`localhost`) and drive it over the DevTools protocol on `127.0.0.1`; `keep.mjs` saves the screenshots your session already took; `backfill.mjs` replays old commits in a temporary `git worktree`; `import.mjs` reads this project's history in `~/.claude/projects/`; `montage.mjs` cuts the video with `ffmpeg`. It also uses `git`, `sips` and `open` (macOS).
+- **What it reads**: the tool calls and results of your session (files written, test runs, commits, screenshots), to log the moments that matter.
+- **What it writes**: only in `~/Movies/buildreel/<project>/` (or `BUILDREEL_HOME`): the journal, the capture recipe, shots, clips, the edit plan and the video. It never writes into your project.
+- **Network**: its only requests go to your own dev server and to the local Chrome it started. Nothing is sent anywhere else.
+
 ## Settings
 
 - **Language** (`auto`, `en`, `fr`): the editing table and the video captions. `auto` follows your system. Change it with `/plugin configure buildreel@buildreel`.
