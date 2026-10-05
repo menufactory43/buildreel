@@ -1,6 +1,6 @@
 {
   "name": "buildreel",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Turns your Claude Code session into a 30-second build-in-public video: it records the moments, films your app, and gives you an editing table before anything is shared.",
   "types": "./types/index.d.ts",
   "author": {
@@ -15,5 +15,10 @@
       "description": "Language of the editing table and the video: auto (follows your system), en or fr.",
       "default": "auto"
     }
-  }
+  },
+  "homepage": "https://github.com/menufactory43/buildreel",
+  "repository": "https://github.com/menufactory43/buildreel",
+  "documentationUrl": "https://github.com/menufactory43/buildreel#readme",
+  "supportUrl": "https://github.com/menufactory43/buildreel/issues",
+  "privacyPolicyUrl": "https://github.com/menufactory43/buildreel#privacy"
 }
